@@ -1,16 +1,16 @@
 package redis.clients.jedis.tests.commands;
 
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.assertNotNull;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.junit.Assert.*;
 import static redis.clients.jedis.ScanParams.SCAN_POINTER_START;
 import static redis.clients.jedis.ScanParams.SCAN_POINTER_START_BINARY;
 import static redis.clients.jedis.params.set.SetParams.setParams;
 
+
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import org.junit.Test;
@@ -550,10 +550,10 @@ public class AllKindOfValuesCommandsTest extends JedisCommandTestBase {
     jedis.set("b", "b");
     jedis.set("a", "a");
 
-    ScanResult<String> result = jedis.scan(SCAN_POINTER_START);
+    List<ScanResult<String>> scanResults = scanCompletely();
 
-    assertEquals(SCAN_POINTER_START, result.getCursor());
-    assertFalse(result.getResult().isEmpty());
+    assertEquals(SCAN_POINTER_START, scanResults.get(scanResults.size() - 1).getCursor());
+    assertEquals(2, getAllKeys(scanResults).size());
 
     // binary
     ScanResult<byte[]> bResult = jedis.scan(SCAN_POINTER_START_BINARY);
@@ -570,10 +570,11 @@ public class AllKindOfValuesCommandsTest extends JedisCommandTestBase {
     jedis.set("b", "b");
     jedis.set("a", "a");
     jedis.set("aa", "aa");
-    ScanResult<String> result = jedis.scan(SCAN_POINTER_START, params);
 
-    assertEquals(SCAN_POINTER_START, result.getCursor());
-    assertFalse(result.getResult().isEmpty());
+    List<ScanResult<String>> scanResults = scanCompletely(params);
+
+    assertEquals(SCAN_POINTER_START, scanResults.get(scanResults.size() - 1).getCursor());
+    assertEquals(2, getAllKeys(scanResults).size());
 
     // binary
     params = new ScanParams();
@@ -617,30 +618,58 @@ public class AllKindOfValuesCommandsTest extends JedisCommandTestBase {
 
   @Test
   public void scanIsCompleteIteration() {
+    Set<String> expected = new HashSet<>();
     for (int i = 0; i < 100; i++) {
-      jedis.set("a" + i, "a" + i);
+      String key = "a" + i;
+      jedis.set(key, "b" + i);
+      expected.add(key);
     }
 
-    ScanResult<String> result = jedis.scan(SCAN_POINTER_START);
-    // note: in theory Redis would be allowed to already return all results on the 1st scan,
-    // but in practice this never happens for data sets greater than a few tens
-    // see: https://redis.io/commands/scan#number-of-elements-returned-at-every-scan-call
-    assertFalse(result.isCompleteIteration());
+    List<ScanResult<String>> scanResults = scanCompletely();
 
-    result = scanCompletely(result.getCursor());
+    assertThat(scanResults.size(), greaterThanOrEqualTo(1));
 
-    assertNotNull(result);
-    assertTrue(result.isCompleteIteration());
+    List<ScanResult<String>> allButLastResult = scanResults.subList(0, scanResults.size() - 1);
+    for (ScanResult<String> result : allButLastResult) {
+      assertFalse(result.isCompleteIteration());
+    }
+
+    ScanResult<String> lastResult = scanResults.get(scanResults.size() - 1);
+    assertTrue(lastResult.isCompleteIteration());
+
+    Set<String> returnedKeys = getAllKeys(scanResults);
+
+    assertEquals(expected, returnedKeys);
   }
 
-  private ScanResult<String> scanCompletely(String cursor) {
+  private <T> Set<T> getAllKeys(List<ScanResult<T>> scanResults) {
+    Set<T> returnedKeys = new HashSet<>();
+    for (ScanResult<T> result : scanResults) {
+      returnedKeys.addAll(result.getResult());
+    }
+    return returnedKeys;
+  }
+
+  private List<ScanResult<String>> scanCompletely() {
+    return scanCompletely(null);
+  }
+
+  private List<ScanResult<String>> scanCompletely(ScanParams params) {
+
+    if (params == null) {
+      params = new ScanParams();
+    }
+    List<ScanResult<String>> results = new ArrayList<>();
+    String cursor = SCAN_POINTER_START;
+
     ScanResult<String> scanResult;
     do {
-      scanResult = jedis.scan(cursor);
+      scanResult = jedis.scan(cursor, params);
+      results.add(scanResult);
       cursor = scanResult.getCursor();
     } while (!SCAN_POINTER_START.equals(scanResult.getCursor()));
 
-    return scanResult;
+    return results;
   }
 
   @Test
